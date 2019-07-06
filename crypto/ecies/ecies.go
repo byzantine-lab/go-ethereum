@@ -39,6 +39,8 @@ import (
 	"hash"
 	"io"
 	"math/big"
+
+	"github.com/ethereum/go-ethereum/crypto"
 )
 
 var (
@@ -362,5 +364,147 @@ func (prv *PrivateKey) Decrypt(c, s1, s2 []byte) (m []byte, err error) {
 	}
 
 	m, err = symDecrypt(params, Ke, c[mStart:mEnd])
+	return
+}
+
+// GenerateEncKey generate a session encryption key.
+func GenerateEncKey(rand io.Reader, pub *PublicKey) (Pk, Ke, Km []byte, err error) {
+	params := pub.Params
+	if params == nil {
+		if params = ParamsFromCurve(pub.Curve); params == nil {
+			err = ErrUnsupportedECIESParameters
+			return
+		}
+	}
+	R, err := GenerateKey(rand, pub.Curve, params)
+	if err != nil {
+		return
+	}
+
+	hash := params.Hash()
+	z, err := R.GenerateShared(pub, params.KeyLen, params.KeyLen)
+	if err != nil {
+		return
+	}
+	K, err := concatKDF(hash, z, nil, params.KeyLen+params.KeyLen)
+	if err != nil {
+		return
+	}
+	Ke = K[:params.KeyLen]
+	Km = K[params.KeyLen:]
+	hash.Write(Km)
+	Km = hash.Sum(nil)
+	hash.Reset()
+
+	Pk = elliptic.Marshal(pub.Curve, R.PublicKey.X, R.PublicKey.Y)
+	return
+}
+
+// EncryptWithSecret encrypts a message using predeterminted session private
+// key.
+func EncryptSymmetric(rand io.Reader, Ke, Km, m []byte) (ct []byte, err error) {
+	curv := crypto.S256()
+	var params *ECIESParams
+
+	if params = ParamsFromCurve(curv); params == nil {
+		err = ErrUnsupportedECIESParameters
+		return
+	}
+
+	em, err := symEncrypt(rand, params, Ke, m)
+	if err != nil || len(em) <= params.BlockSize {
+		return
+	}
+
+	d := messageTag(params.Hash, Km, em, nil)
+
+	ct = make([]byte, len(em)+len(d))
+	copy(ct, em)
+	copy(ct[len(em):], d)
+	return
+}
+
+func GenerateDecKey(prv *PrivateKey, Pk []byte) (Ke, Km []byte, err error) {
+	curv := prv.Curve
+
+	if len(Pk) == 0 {
+		err = ErrInvalidMessage
+		return
+	}
+	var params *ECIESParams
+	if params = ParamsFromCurve(curv); params == nil {
+		err = ErrUnsupportedECIESParameters
+		return
+	}
+
+	var rLen int
+	hash := params.Hash()
+
+	switch Pk[0] {
+	case 2, 3, 4:
+		rLen = (curv.Params().BitSize + 7) / 4
+		if len(Pk) != rLen {
+			err = ErrInvalidMessage
+			return
+		}
+	default:
+		err = ErrInvalidPublicKey
+		return
+	}
+
+	R := new(PublicKey)
+	R.Curve = curv
+	R.X, R.Y = elliptic.Unmarshal(R.Curve, Pk[:rLen])
+	if R.X == nil {
+		err = ErrInvalidPublicKey
+		return
+	}
+	if !R.Curve.IsOnCurve(R.X, R.Y) {
+		err = ErrInvalidCurve
+		return
+	}
+
+	z, err := prv.GenerateShared(R, params.KeyLen, params.KeyLen)
+	if err != nil {
+		return
+	}
+
+	K, err := concatKDF(hash, z, nil, params.KeyLen+params.KeyLen)
+	if err != nil {
+		return
+	}
+
+	Ke = K[:params.KeyLen]
+	Km = K[params.KeyLen:]
+	hash.Write(Km)
+	Km = hash.Sum(nil)
+	hash.Reset()
+
+	return
+}
+
+// Decrypt decrypts an ECIES ciphertext.
+func DecryptSymmetic(c, Ke, Km []byte) (m []byte, err error) {
+	curv := crypto.S256()
+
+	if len(c) == 0 {
+		return nil, ErrInvalidMessage
+	}
+	var params *ECIESParams
+	if params = ParamsFromCurve(curv); params == nil {
+		err = ErrUnsupportedECIESParameters
+		return
+	}
+
+	hash := params.Hash()
+	mEnd := len(c) - hash.Size()
+
+	d := messageTag(params.Hash, Km, c[:mEnd], nil)
+	if subtle.ConstantTimeCompare(c[mEnd:], d) != 1 {
+		err = ErrInvalidMessage
+		return
+	}
+
+	m, err = symDecrypt(params, Ke, c[:mEnd])
 	return
 }
