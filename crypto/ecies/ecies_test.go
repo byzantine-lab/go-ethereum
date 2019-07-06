@@ -430,3 +430,43 @@ func hexKey(prv string) *PrivateKey {
 	}
 	return ImportECDSA(key)
 }
+
+func TestSymcEncryptDecript(t *testing.T) {
+	prvKey, err := crypto.GenerateKey()
+	if err != nil {
+		panic(err)
+	}
+
+	eciesPubKey := ImportECDSAPublic(&prvKey.PublicKey)
+	Epk, K, err := GenerateEncKey(rand.Reader, eciesPubKey)
+	if err != nil {
+		t.Fatalf("failed to generate enc key: %v", err)
+	}
+
+	eciesPrvKey := ImportECDSA(prvKey)
+	dK, err := GenerateDecKey(eciesPrvKey, Epk)
+	if err != nil {
+		t.Fatalf("failed to generate dec key: %v", err)
+	}
+
+	if bytes.Compare(K, dK) != 0 {
+		t.Fatalf("incorrect dec key (Ke) generated:\n%s\n%s", K, dK)
+	}
+
+	data := []byte("Yoooooooooooooooooooooooooo!")
+	ct, err := EncryptSymmetric(rand.Reader, K, data)
+	if err != nil {
+		t.Fatalf("failed encrypt data: %v", err)
+	}
+
+	decrypted, err := DecryptSymmetic(ct, K)
+	if err != nil {
+		t.Fatalf("failed decrypt data: %v", err)
+	}
+
+	if bytes.Compare(data, decrypted) != 0 {
+		t.Fatalf("decoded data is different from original:\n%s\n%s",
+			data, decrypted)
+	}
+
+}
