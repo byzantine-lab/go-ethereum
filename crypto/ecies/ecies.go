@@ -390,15 +390,7 @@ func GenerateEncKey(rand io.Reader, pub *PublicKey) (Pk, Key []byte, err error) 
 	if err != nil {
 		return
 	}
-	Ke := K[:params.KeyLen]
-	Km := K[params.KeyLen:]
-	hash.Write(Km)
-	Km = hash.Sum(nil)
-	hash.Reset()
-
-	Key = make([]byte, len(Ke)+len(Km))
-	copy(Key, Ke)
-	copy(Key[len(Ke):], Km)
+	Key = K[:params.KeyLen]
 
 	Pk = elliptic.Marshal(pub.Curve, R.PublicKey.X, R.PublicKey.Y)
 	return
@@ -416,14 +408,13 @@ func EncryptSymmetric(rand io.Reader, K, m []byte) (ct []byte, err error) {
 	}
 
 	Ke := K[:params.KeyLen]
-	Km := K[params.KeyLen:]
 
 	em, err := symEncrypt(rand, params, Ke, m)
 	if err != nil || len(em) <= params.BlockSize {
 		return
 	}
 
-	d := messageTag(params.Hash, Km, em, nil)
+	d := messageTag(params.Hash, nil, em, nil)
 
 	ct = make([]byte, len(em)+len(d))
 	copy(ct, em)
@@ -481,15 +472,7 @@ func GenerateDecKey(prv *PrivateKey, Pk []byte) (Key []byte, err error) {
 		return
 	}
 
-	Ke := K[:params.KeyLen]
-	Km := K[params.KeyLen:]
-	hash.Write(Km)
-	Km = hash.Sum(nil)
-	hash.Reset()
-
-	Key = make([]byte, len(Ke)+len(Km))
-	copy(Key, Ke)
-	copy(Key[len(Ke):], Km)
+	Key = K[:params.KeyLen]
 
 	return
 }
@@ -507,13 +490,12 @@ func DecryptSymmetic(c, K []byte) (m []byte, err error) {
 		return
 	}
 
-	Ke := K[:params.KeyLen]
-	Km := K[params.KeyLen:]
+	Ke := K
 
 	hash := params.Hash()
 	mEnd := len(c) - hash.Size()
 
-	d := messageTag(params.Hash, Km, c[:mEnd], nil)
+	d := messageTag(params.Hash, nil, c[:mEnd], nil)
 	if subtle.ConstantTimeCompare(c[mEnd:], d) != 1 {
 		err = ErrInvalidMessage
 		return
